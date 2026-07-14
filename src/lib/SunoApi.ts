@@ -314,16 +314,43 @@ class SunoApi {
     await page.goto('https://suno.com/create', { referer: 'https://www.google.com/', waitUntil: 'domcontentloaded', timeout: 0 });
 
     logger.info('Waiting for Suno interface to load');
-    // await page.locator('.react-aria-GridList').waitFor({ timeout: 60000 });
-    try {
-  await page.locator('.custom-textarea').waitFor({
+
+const textarea = page.locator('.custom-textarea').first();
+
+try {
+  await textarea.waitFor({
     state: 'visible',
-    timeout: 120000,
+    timeout: 60000,
   });
-} catch {
+} catch (error) {
+  const currentUrl = page.url();
+  let pageTitle = '';
+
+  try {
+    pageTitle = await page.title();
+  } catch {
+    pageTitle = 'Unable to read page title';
+  }
+
+  const errorMessage =
+    error instanceof Error ? error.message : String(error);
+
+  logger.error(
+    {
+      currentUrl,
+      pageTitle,
+      error: errorMessage,
+    },
+    'Suno create interface did not become ready'
+  );
+
+  await browser.close().catch(() => undefined);
+
   throw new Error(
-    `Suno create UI did not become ready. Current URL: ${page.url()}. ` +
-    `Update SUNO_COOKIE or check whether Suno changed the create page.`
+    `Suno create UI unavailable. ` +
+    `URL: ${currentUrl}; ` +
+    `title: ${pageTitle}; ` +
+    `reason: ${errorMessage}`
   );
 }
 
@@ -336,7 +363,6 @@ class SunoApi {
       // await this.click(page, { x: 318, y: 13 });
     } catch(e) {}
 
-    const textarea = page.locator('.custom-textarea');
     await this.click(textarea);
     await textarea.pressSequentially('Lorem ipsum', { delay: 80 });
 
