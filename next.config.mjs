@@ -16,6 +16,11 @@ const nextConfig = {
       'rebrowser-playwright-core',
       'electron'
     ],
+    outputFileTracingIncludes: {
+      "/*": [
+        "./node_modules/rebrowser-playwright-core/.local-browsers/**/*"
+      ],
+    },
   },
 };  
 
