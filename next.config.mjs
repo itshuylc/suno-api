@@ -8,7 +8,7 @@ const nextConfig = {
     return config;
   },
   experimental: {
-    serverMinification: false, // the server minification unfortunately breaks the selector class names
+    serverMinification: true,
     serverComponentsExternalPackages: [
       '@playwright/browser-chromium',
       'playwright',
@@ -17,11 +17,17 @@ const nextConfig = {
       'electron'
     ],
     outputFileTracingIncludes: {
-      "/*": [
-        "./node_modules/rebrowser-playwright-core/.local-browsers/**/*"
+      "/api/generate": [
+        "./node_modules/rebrowser-playwright-core/.local-browsers/**/*",
+      ],
+      "/api/custom_generate": [
+        "./node_modules/rebrowser-playwright-core/.local-browsers/**/*",
+      ],
+      "/v1/chat/completions": [
+        "./node_modules/rebrowser-playwright-core/.local-browsers/**/*",
       ],
     },
   },
-};  
+};
 
 export default nextConfig;
