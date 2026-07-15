@@ -154,12 +154,18 @@ class SunoApi {
   const clientCookie = Object.entries(this.cookies).find(
     ([name, value]) =>
       Boolean(value) &&
-      (name === '__client' || name.startsWith('__client_'))
+      (
+        name === '__client' ||
+        (
+          name.startsWith('__client_') &&
+          !name.startsWith('__client_uat_')
+        )
+      )
   );
 
   if (!clientCookie?.[1]) {
     throw new Error(
-      'Missing Clerk client cookie. Expected __client or __client_*'
+      'Missing Clerk refresh cookie. Expected __client or __client_<instance>, not __client_uat_*'
     );
   }
 
@@ -199,9 +205,15 @@ class SunoApi {
     const renewUrl = `${SunoApi.CLERK_BASE_URL}/v1/client/sessions/${this.sid}/tokens?__clerk_api_version=2025-11-10&_clerk_js_version=${SunoApi.CLERK_VERSION}`;
     // Renew session token
     logger.info('KeepAlive...\n');
-    const renewResponse = await this.client.post(renewUrl, {}, {
-      headers: { Authorization: this.cookies.__client }
-    });
+    const renewResponse = await this.client.post(
+  renewUrl,
+  {},
+  {
+    headers: {
+      Authorization: this.getClientCookie(),
+    },
+  }
+);
     if (isWait) {
       await sleep(1, 2);
     }
@@ -279,50 +291,81 @@ class SunoApi {
    * @returns {BrowserContext}
    */
   private async launchBrowser(): Promise<BrowserContext> {
-    const args = [
-      '--disable-blink-features=AutomationControlled',
-      '--disable-web-security',
-      '--no-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-features=site-per-process',
-      '--disable-features=IsolateOrigins',
-      '--disable-extensions',
-      '--disable-infobars'
-    ];
-    // Check for GPU acceleration, as it is recommended to turn it off for Docker
-    if (yn(process.env.BROWSER_DISABLE_GPU, { default: false }))
-      args.push('--enable-unsafe-swiftshader',
-        '--disable-gpu',
-        '--disable-setuid-sandbox');
-    const browser = await this.getBrowserType().launch({
-      args,
-      headless: yn(process.env.BROWSER_HEADLESS, { default: true })
-    });
-    const context = await browser.newContext({ userAgent: this.userAgent, locale: process.env.BROWSER_LOCALE, viewport: null });
-    const cookies = [];
-    const lax: 'Lax' | 'Strict' | 'None' = 'Lax';
-    cookies.push({
-      name: '__session',
-      value: this.currentToken+'',
-      domain: '.suno.com',
-      path: '/',
-      sameSite: lax
-    });
-    for (const [key, value] of Object.entries(this.cookies)) {
-  // __session mới đã được tạo từ currentToken phía trên.
-  // Không cho cookie __session cũ ghi đè token mới.
-  if (key === '__session' || !value) {
-    continue;
+  const args = [
+    '--disable-blink-features=AutomationControlled',
+    '--disable-web-security',
+    '--no-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-features=site-per-process',
+    '--disable-features=IsolateOrigins',
+    '--disable-extensions',
+    '--disable-infobars',
+  ];
+
+  if (yn(process.env.BROWSER_DISABLE_GPU, { default: false })) {
+    args.push(
+      '--enable-unsafe-swiftshader',
+      '--disable-gpu',
+      '--disable-setuid-sandbox'
+    );
   }
 
-  cookies.push({
-  name: '__session',
-  value: this.currentToken + '',
-  domain: '.suno.com',
-  path: '/',
-  sameSite: lax,
-  secure: true,
-});
+  const browser = await this.getBrowserType().launch({
+    args,
+    headless: yn(process.env.BROWSER_HEADLESS, { default: true }),
+  });
+
+  const context = await browser.newContext({
+    userAgent: this.userAgent,
+    locale: process.env.BROWSER_LOCALE,
+    viewport: {
+      width: 1280,
+      height: 720,
+    },
+  });
+
+  const lax: 'Lax' | 'Strict' | 'None' = 'Lax';
+
+  const cookies = [
+    {
+      name: '__session',
+      value: this.currentToken || '',
+      domain: '.suno.com',
+      path: '/',
+      sameSite: lax,
+      secure: true,
+    },
+  ];
+
+  for (const [key, value] of Object.entries(this.cookies)) {
+    // Token __session mới đã được tạo từ currentToken.
+    // Không cho __session cũ trong SUNO_COOKIE ghi đè token mới.
+    if (key === '__session' || !value) {
+      continue;
+    }
+
+    // Bỏ các thuộc tính Set-Cookie nếu bị dán nhầm vào SUNO_COOKIE.
+    if (
+      ['expires', 'max-age', 'path', 'samesite', 'secure', 'httponly']
+        .includes(key.toLowerCase())
+    ) {
+      continue;
+    }
+
+    cookies.push({
+      name: key,
+      value,
+      domain: '.suno.com',
+      path: '/',
+      sameSite: lax,
+      secure: true,
+    });
+  }
+
+  await context.addCookies(cookies);
+
+  return context;
+}
 
   /**
    * Checks for CAPTCHA verification and solves the CAPTCHA if needed
@@ -909,21 +952,45 @@ try {
   }
 }
 
-export const sunoApi = async (cookie?: string) => {
-  const resolvedCookie = cookie && cookie.includes('__client') ? cookie : process.env.SUNO_COOKIE; // Check for bad `Cookie` header (It's too expensive to actually parse the cookies *here*)
-  if (!resolvedCookie) {
-    logger.info('No cookie provided! Aborting...\nPlease provide a cookie either in the .env file or in the Cookie header of your request.')
-    throw new Error('Please provide a cookie either in the .env file or in the Cookie header of your request.');
+const hasClientCookie = (value?: string): boolean => {
+  if (!value) {
+    return false;
   }
 
-  // Check if the instance for this cookie already exists in the cache
-  const cachedInstance = cache.get(resolvedCookie);
-  if (cachedInstance)
-    return cachedInstance;
+  return value
+    .split(';')
+    .map(part => part.trim().split('=')[0])
+    .some(name =>
+      name === '__client' ||
+      (
+        name.startsWith('__client_') &&
+        !name.startsWith('__client_uat_')
+      )
+    );
+};
 
-  // If not, create a new instance and initialize it
+export const sunoApi = async (providedCookie?: string) => {
+  const resolvedCookie =
+    providedCookie || process.env.SUNO_COOKIE;
+
+  if (!resolvedCookie || !hasClientCookie(resolvedCookie)) {
+    logger.info(
+      'No valid Clerk client cookie provided. Expected __client or __client_<instance>.'
+    );
+
+    throw new Error(
+      'SUNO_COOKIE must contain __client or __client_<instance>; __client_uat_* alone is not sufficient.'
+    );
+  }
+
+  const cachedInstance = cache.get(resolvedCookie);
+
+  if (cachedInstance) {
+    return cachedInstance;
+  }
+
   const instance = await new SunoApi(resolvedCookie).init();
-  // Cache the initialized instance
+
   cache.set(resolvedCookie, instance);
 
   return instance;
