@@ -149,13 +149,34 @@ class SunoApi {
   /**
    * Get the session ID and save it for later use.
    */
+
+  private getClientCookie(): string {
+  const clientCookie = Object.entries(this.cookies).find(
+    ([name, value]) =>
+      Boolean(value) &&
+      (name === '__client' || name.startsWith('__client_'))
+  );
+
+  if (!clientCookie?.[1]) {
+    throw new Error(
+      'Missing Clerk client cookie. Expected __client or __client_*'
+    );
+  }
+
+  return clientCookie[1];
+}
+  
   private async getAuthToken() {
     logger.info('Getting the session ID');
     // URL to get session ID
     const getSessionUrl = `${SunoApi.CLERK_BASE_URL}/v1/client?__clerk_api_version=2025-11-10&_clerk_js_version=${SunoApi.CLERK_VERSION}`;
     // Get session ID
+    const clientCookie = this.getClientCookie();
+
     const sessionResponse = await this.client.get(getSessionUrl, {
-      headers: { Authorization: this.cookies.__client }
+      headers: {
+        Authorization: clientCookie,
+      },
     });
     if (!sessionResponse?.data?.response?.last_active_session_id) {
       throw new Error(
