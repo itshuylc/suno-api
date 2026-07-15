@@ -287,18 +287,21 @@ class SunoApi {
       path: '/',
       sameSite: lax
     });
-    for (const key in this.cookies) {
-      cookies.push({
-        name: key,
-        value: this.cookies[key]+'',
-        domain: '.suno.com',
-        path: '/',
-        sameSite: lax
-      })
-    }
-    await context.addCookies(cookies);
-    return context;
+    for (const [key, value] of Object.entries(this.cookies)) {
+  // __session mới đã được tạo từ currentToken phía trên.
+  // Không cho cookie __session cũ ghi đè token mới.
+  if (key === '__session' || !value) {
+    continue;
   }
+
+  cookies.push({
+  name: '__session',
+  value: this.currentToken + '',
+  domain: '.suno.com',
+  path: '/',
+  sameSite: lax,
+  secure: true,
+});
 
   /**
    * Checks for CAPTCHA verification and solves the CAPTCHA if needed
